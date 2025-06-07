@@ -42,7 +42,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
     this._resolveInitialized = resolve;
   });
 
-  async #waitForPromises() {
+  async waitForPromises() {
     if (this.privateWindowOrDisabled) {
       return;
     }
@@ -115,9 +115,6 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
 
     window.addEventListener('resize', this.onWindowResize.bind(this));
     this.addPopupListeners();
-
-    await this.#waitForPromises();
-    await this._workspaces();
 
     await this.afterLoadInit();
   }
@@ -297,6 +294,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
       return;
     }
     this._pinnedTabsResizeObserver = new ResizeObserver(this.onPinnedTabsResize.bind(this));
+    await this.waitForPromises();
     await this._createDefaultWorkspaceIfNeeded();
   }
 
@@ -465,6 +463,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
             tabs
           );
           this.initIndicatorContextMenu(workspaceWrapper.indicator);
+          this.initScrollEvent(workspaceWrapper.indicator);
           resolve();
         },
         { once: true }
@@ -544,6 +543,14 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
     }
   }
 
+  scrollInDirection(delta) {
+    // Determine scroll direction
+    let rawDirection = delta > 0 ? 1 : -1;
+
+    let direction = this.naturalScroll ? -1 : 1;
+    this.changeWorkspaceShortcut(rawDirection * direction);
+  }
+
   _setupSidebarHandlers() {
     const toolbox = gNavToolbox;
 
@@ -585,11 +592,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
         const delta = isVerticalScroll ? event.deltaY : event.deltaX;
         if (Math.abs(delta) < scrollThreshold) return;
 
-        // Determine scroll direction
-        let rawDirection = delta > 0 ? 1 : -1;
-
-        let direction = this.naturalScroll ? -1 : 1;
-        this.changeWorkspaceShortcut(rawDirection * direction);
+        this.scrollInDirection(delta);
 
         this._lastScrollTime = currentTime;
       },
@@ -740,12 +743,11 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
 
   get shouldHaveWorkspaces() {
     if (typeof this._shouldHaveWorkspaces === 'undefined') {
-      let chromeFlags = docShell.treeOwner
-        .QueryInterface(Ci.nsIInterfaceRequestor)
-        .getInterface(Ci.nsIAppWindow).chromeFlags;
-      this._shouldHaveWorkspaces =
-        chromeFlags & Ci.nsIWebBrowserChrome.CHROME_TOOLBAR ||
-        chromeFlags & Ci.nsIWebBrowserChrome.CHROME_MENUBAR;
+      let docElement = document.documentElement;
+      this._shouldHaveWorkspaces = !(
+        docElement.getAttribute('chromehidden').includes('toolbar') ||
+        docElement.getAttribute('chromehidden').includes('menubar')
+      );
       return this._shouldHaveWorkspaces;
     }
     return this._shouldHaveWorkspaces;
@@ -854,7 +856,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
     await this.workspaceBookmarks();
     await gZenPinnedTabManager.refreshPinnedTabs({ init: true });
     await this.changeWorkspace(activeWorkspace, { onInit: true });
-    await this.#selectStartPage();
+    await this._selectStartPage();
     this._fixTabPositions();
     this._resolveInitialized();
     this._clearAnyZombieTabs(); // Dont call with await
@@ -871,7 +873,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
     window.addEventListener('TabBrowserInserted', this.onTabBrowserInserted.bind(this));
   }
 
-  async #selectStartPage() {
+  async _selectStartPage() {
     if (gZenUIManager.testingEnabled) {
       return;
     }
@@ -992,6 +994,10 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
     };
     indicator.addEventListener('contextmenu', th);
     indicator.addEventListener('click', th);
+  }
+
+  initScrollEvent(element) {
+    element.addEventListener('wheel', (event) => this.scrollInDirection(event.deltaY));
   }
 
   shouldCloseWindow() {
@@ -2020,7 +2026,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
     ) {
       delete this._alwaysAnimatePaddingTop;
       const essentialsHeight = essentialContainer.getBoundingClientRect().height;
-      if (!forAnimation && animateContainer && gZenUIManager.motion) {
+      if (!forAnimation && animateContainer) {
         gZenUIManager.motion.animate(
           workspaceElement,
           {
@@ -2522,6 +2528,7 @@ var gZenWorkspaces = new (class extends ZenMultiWindowFeature {
 
     gZenUIManager.tabsWrapper.scrollbarWidth = 'none';
     this.workspaceIcons.activeIndex = workspace.uuid;
+    this.initScrollEvent(this.workspaceIcons);
     await this._animateTabs(workspace, !onInit && !this._animatingChange, tabToSelect, {
       previousWorkspaceIndex,
       previousWorkspace,
